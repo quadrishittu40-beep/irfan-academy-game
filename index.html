@@ -272,6 +272,11 @@
   .slip-h{font-family:'Amiri',serif;font-weight:700;font-size:15px;color:#0b3d2e;}
   .slip-s{font-size:11px;color:#8a6d00;font-weight:700;margin-bottom:6px;}
   .slip-l{font-size:10.5px;color:#555;margin-top:6px;word-break:break-all;}
+  .avatar{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:#0b3d2e center/cover no-repeat;color:#f1e9c4;font-weight:800;border:2px solid var(--gold);flex-shrink:0;box-sizing:border-box;}
+  .chip-av{display:flex;justify-content:center;margin-bottom:6px;}
+  .stat{border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;}
+  .stat b{display:block;font-size:22px;color:var(--green);}
+  .stat span{font-size:11px;color:#8a8a7c;}
   @media (prefers-color-scheme: dark){
     :root:not([data-theme="light"]){
       --cream:#12180f; --ink:#eae6d8; --line:#33402c;
@@ -300,6 +305,7 @@ body:not([data-theme="light"]) .qtext,
     body:not([data-theme="light"]) .cert-section p{color:#f1e9c4 !important;}
     body:not([data-theme="light"]) .timer-track{background:#3a4432;}
         body:not([data-theme="light"]) .stage-title{color:#f1e9c4;}
+    body:not([data-theme="light"]) .stat b{color:#f1e9c4;}
     body:not([data-theme="light"]) input, body:not([data-theme="light"]) select{
       background:#0f150c;color:var(--ink);border-color:#3a4732;
     }
@@ -340,12 +346,50 @@ body:not([data-theme="light"]) .qtext,
         <h3>Competition</h3>
         <p>Follow the knockout bracket: fixtures, results and the champion.</p>
       </div>
+      <div class="choice-card" id="goProfile">
+        <div class="ic">👤</div>
+        <h3>My Profile</h3>
+        <p>See your stats and set your photo.</p>
+      </div>
       <div class="choice-card" id="goAdmin">
         <div class="ic">🛡️</div>
         <h3>Admin Portal</h3>
         <p>Manage IDs, questions, scores and rewards.</p>
       </div>
     </div>
+  </section>
+
+  <!-- PLAYER PROFILE -->
+  <section id="profileScreen" class="card hidden">
+    <div id="profLoginPanel">
+      <h2>My Profile</h2>
+      <p class="sub">Log in with your team ID and password.</p>
+      <label for="profId">Team ID</label>
+      <input id="profId" placeholder="e.g. IRFAN-014" autocomplete="off">
+      <label for="profPass">Password</label>
+      <input id="profPass" type="password" placeholder="Password">
+      <div class="err" id="profErr"></div>
+      <button class="primary-btn" id="profLoginBtn">View my profile</button>
+    </div>
+    <div id="profPanel" class="hidden">
+      <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:4px;">
+        <div id="profAvatar"></div>
+        <h2 id="profName" style="margin:8px 0 0;"></h2>
+        <div class="sub" id="profIdTxt" style="margin:0;"></div>
+      </div>
+      <div class="row2" style="margin-top:14px;">
+        <div class="stat"><b id="profWins">0</b><span>Wins</span></div>
+        <div class="stat"><b id="profPlayed">0</b><span>Matches played</span></div>
+      </div>
+      <div id="profRewards" style="margin-top:10px;text-align:center;"></div>
+      <div class="err" id="profMsg" style="text-align:center;"></div>
+      <input type="file" id="profPhotoFile" accept="image/*" class="hidden">
+      <button class="primary-btn gold" id="profPhotoBtn">📷 Choose / change photo</button>
+      <button class="primary-btn ghost" id="profRemoveBtn">Remove photo</button>
+      <p class="hint">Your photo is shown in a circle on the match scoreboard and on your certificates.</p>
+      <button class="linkbtn" style="margin-top:6px;display:block;text-align:center;width:100%;" id="profLogoutBtn">Log out</button>
+    </div>
+    <button class="linkbtn" style="margin-top:12px;display:block;text-align:center;width:100%;" id="profBack">← Back</button>
   </section>
 
   <!-- PUBLIC COMPETITION VIEW -->
@@ -487,6 +531,7 @@ body:not([data-theme="light"]) .qtext,
         <button class="primary-btn ghost" id="idsCsvBtn" style="margin-top:0;">⬇️ ID list (CSV)</button>
         <button class="primary-btn ghost" id="idsPrintBtn" style="margin-top:0;">🖨️ Print slips</button>
       </div>
+      <input type="file" id="adminPhotoFile" accept="image/*" class="hidden">
       <div id="accList"></div>
     </div>
 
@@ -624,11 +669,13 @@ body:not([data-theme="light"]) .qtext,
     </div>
     <div class="scoreboard">
       <div class="team-chip" id="chipA">
+        <div class="chip-av" id="chipAAvatar"></div>
         <div class="name" id="chipAName">Team One</div>
         <div class="score" id="chipAScore">0</div>
       </div>
       <div class="vs">VS</div>
       <div class="team-chip right" id="chipB">
+        <div class="chip-av" id="chipBAvatar"></div>
         <div class="name" id="chipBName">Team Two</div>
         <div class="score" id="chipBScore">0</div>
       </div>
@@ -2186,7 +2233,7 @@ function initFirestoreSync(){
 }
 
 /* ---------------- navigation ---------------- */
-const screens = ['homeScreen','loginScreen','compScreen','adminLoginScreen','adminScreen','gameScreen'];
+const screens = ['homeScreen','loginScreen','compScreen','profileScreen','adminLoginScreen','adminScreen','gameScreen'];
 function show(id){
   screens.forEach(s=>document.getElementById(s).classList.toggle('hidden', s!==id));
   document.getElementById('homeBtn').classList.toggle('hidden', id==='homeScreen');
@@ -2248,14 +2295,18 @@ function renderAccounts(){
   if(store.accounts.length===0){ wrap.innerHTML = '<div class="empty">No student or group IDs yet.</div>'; return; }
   store.accounts.forEach(acc=>{
     const div = document.createElement('div'); div.className='list-item';
-    const rewards = (acc.rewards||[]).map(r=>'<span class="badge-pill">🏅 '+r+'</span>').join('');
-    div.innerHTML = `<div class="info"><b>${escapeHtml(acc.name)}</b> — ID: ${escapeHtml(acc.id)}<br><span class="meta">Wins: ${acc.wins||0} · Matches: ${acc.matchesPlayed||0}</span><br>${rewards}</div>`;
+    const rewards = (acc.rewards||[]).map(r=>'<span class="badge-pill">🏅 '+escapeHtml(r)+'</span>').join('');
+    div.innerHTML = `<div style="display:flex;gap:10px;align-items:center;min-width:0;">${avatarHTML(acc,44)}<div class="info"><b>${escapeHtml(acc.name)}</b> — ID: ${escapeHtml(acc.id)}<br><span class="meta">Wins: ${acc.wins||0} · Matches: ${acc.matchesPlayed||0}</span><br>${rewards}</div></div>`;
+    const actions = document.createElement('div'); actions.className = 'actions';
+    const photoBtn = document.createElement('button'); photoBtn.className = 'small-btn'; photoBtn.textContent = '📷 Photo';
+    photoBtn.onclick = ()=>{ adminPhotoTarget = acc.id; document.getElementById('adminPhotoFile').click(); };
     const btn = document.createElement('button'); btn.className='del-btn'; btn.textContent='Remove';
     btn.onclick = async ()=>{
       if(SYNCED){ try{ await FB.collection('accounts').doc(acc.id).delete(); }catch(e){ console.error(e); } }
       else { store.accounts = store.accounts.filter(a=>a.id!==acc.id); saveStore(); renderAccounts(); }
     };
-    div.appendChild(btn);
+    actions.appendChild(photoBtn); actions.appendChild(btn);
+    div.appendChild(actions);
     wrap.appendChild(div);
   });
 }
@@ -2379,10 +2430,10 @@ function renderScores(){
     }
     const wBtn = document.createElement('button'); wBtn.className='small-btn';
     wBtn.textContent = info.winLabel;
-    wBtn.onclick = ()=>adminCert(m.winnerName, info.winKind, info.opts);
+    wBtn.onclick = ()=>adminCert(m.winnerName, info.winKind, Object.assign({}, info.opts, {accountId: m.winnerId}));
     const lBtn = document.createElement('button'); lBtn.className='small-btn';
     lBtn.textContent = info.loseLabel;
-    lBtn.onclick = ()=>adminCert(info.loserName, info.loseKind, info.opts);
+    lBtn.onclick = ()=>adminCert(info.loserName, info.loseKind, Object.assign({}, info.opts, {accountId: m.loserId}));
     actions.appendChild(wBtn); actions.appendChild(lBtn);
     div.appendChild(actions);
     mw.appendChild(div);
@@ -2912,6 +2963,8 @@ function renderLive(){
   const note = $('liveNote'); note.classList.remove('hidden');
   note.innerHTML = '🔴 LIVE — ' + escapeHtml(d.stage) + ' · You are <b>' + escapeHtml(c.myName) + '</b> (ID: <b>' + escapeHtml(c.myId) + '</b>) — ' + (c.mySide==='B' ? 'right side' : 'left side');
   $('chipAName').textContent = d.aName; $('chipBName').textContent = d.bName;
+  setAvatar('chipAAvatar', accountById(d.aId) || {id:d.aId, name:d.aName}, 40);
+  setAvatar('chipBAvatar', accountById(d.bId) || {id:d.bId, name:d.bName}, 40);
   $('chipAScore').textContent = d.scoreA; $('chipBScore').textContent = d.scoreB;
   $('chipA').classList.toggle('turn', d.status==='playing' && d.turn==='A');
   $('chipB').classList.toggle('turn', d.status==='playing' && d.turn==='B');
@@ -2984,7 +3037,7 @@ function showLiveResult(d){
   document.getElementById('certMsg').textContent = '';
   document.getElementById('playAgainBtn').style.display = 'none';
   document.getElementById('newTeamsBtn').textContent = d.compId ? 'Back to Bracket' : 'Back to Home';
-  state = { live:true, liveFriendly: !d.compId, winAcc:{name:winName}, loseAcc:{name:loseName}, certInfo:info, ctx:null };
+  state = { live:true, liveFriendly: !d.compId, winAcc:{name:winName, id: wSide==='A' ? d.aId : d.bId}, loseAcc:{name:loseName, id: wSide==='A' ? d.bId : d.aId}, certInfo:info, ctx:null };
   document.getElementById('overlay').classList.add('show');
 }
 document.getElementById('joinCompBtn').onclick = async ()=>{
@@ -3261,6 +3314,8 @@ function startGame(accA, accB, ctx, level, subject){
   state = { accA, accB, scoreA:0, scoreB:0, pos:0, turn:'A', round:1, currentQ:null, answered:false, played:0, ctx: ctx||null, level, subject, timeTotal:0, lifelines:{A:{fifty:false,time:false,skip:false},B:{fifty:false,time:false,skip:false}} };
   document.getElementById('chipAName').textContent = accA.name;
   document.getElementById('chipBName').textContent = accB.name;
+  setAvatar('chipAAvatar', accountById(accA.id) || accA, 40);
+  setAvatar('chipBAvatar', accountById(accB.id) || accB, 40);
   document.getElementById('liveNote').classList.add('hidden');
   show('gameScreen');
   startProtection(accA.name + ' vs ' + accB.name);
@@ -3425,10 +3480,10 @@ function declareWinner(team, reason){
 }
 
 document.getElementById('certWinnerBtn').addEventListener('click', ()=>{
-  if(state && state.winAcc) generateCertificate(state.winAcc.name, state.certInfo.winKind, state.certInfo.opts);
+  if(state && state.winAcc) generateCertificate(state.winAcc.name, state.certInfo.winKind, Object.assign({}, state.certInfo.opts, {accountId: state.winAcc.id}));
 });
 document.getElementById('certLoserBtn').addEventListener('click', ()=>{
-  if(state && state.loseAcc) generateCertificate(state.loseAcc.name, state.certInfo.loseKind, state.certInfo.opts);
+  if(state && state.loseAcc) generateCertificate(state.loseAcc.name, state.certInfo.loseKind, Object.assign({}, state.certInfo.opts, {accountId: state.loseAcc.id}));
 });
 
 /* ---------------- certificate generation ---------------- */
@@ -3576,6 +3631,25 @@ async function generateCertificate(name, type, opts){
     img.onerror = res;
     img.src = LOGO_SRC;
   });
+
+  // The player's own photo, in a circle with a gold ring, at the top right (only when they have one)
+  const photoSrc = opts.photo || certPhotoFor(opts.accountId, name);
+  if(photoSrc){
+    await new Promise(res=>{
+      const im = new Image();
+      im.onload = ()=>{
+        const cx = W-165, cy = 118, r = 60;
+        ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.closePath(); ctx.clip();
+        ctx.drawImage(im, cx-r, cy-r, r*2, r*2);
+        ctx.restore();
+        ctx.beginPath(); ctx.arc(cx, cy, r+3, 0, Math.PI*2); ctx.lineWidth = 6; ctx.strokeStyle = '#c9a227'; ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx, cy, r+8, 0, Math.PI*2); ctx.lineWidth = 2; ctx.strokeStyle = '#0b3d2e'; ctx.stroke();
+        res();
+      };
+      im.onerror = res;
+      im.src = photoSrc;
+    });
+  }
 
   ctx.textAlign = 'center';
   ctx.fillStyle = '#0b3d2e';
@@ -4041,6 +4115,112 @@ document.getElementById('matchCsvBtn').onclick = ()=>{
   });
   downloadCSV('match-history.csv', rows, document.getElementById('exportMsg'));
 };
+
+
+/* ---------------- player photos & profile ---------------- */
+let adminPhotoTarget = null, profileAcc = null;
+function accountById(id){ return id ? store.accounts.find(a=>a.id===id) : null; }
+function avatarHTML(acc, size){
+  size = size || 40;
+  if(acc && acc.photo) return `<span class="avatar" style="width:${size}px;height:${size}px;background-image:url('${acc.photo}')"></span>`;
+  const ch = escapeHtml(((acc && acc.name) || '?').trim().charAt(0).toUpperCase() || '?');
+  return `<span class="avatar" style="width:${size}px;height:${size}px;font-size:${Math.round(size*0.42)}px">${ch}</span>`;
+}
+function setAvatar(elId, acc, size){
+  const el = document.getElementById(elId); if(!el) return;
+  const key = ((acc && acc.id) || '') + '|' + ((acc && acc.name) || '') + '|' + (((acc && acc.photo) || '').length) + '|' + size;
+  if(el._avKey===key) return;
+  el._avKey = key; el.innerHTML = avatarHTML(acc, size);
+}
+function certPhotoFor(accountId, name){
+  let a = accountId ? store.accounts.find(x=>x.id===accountId) : null;
+  if(!a && name) a = store.accounts.find(x=>x.name===name);
+  return (a && a.photo) || '';
+}
+/* centre-crops to a square and shrinks to 160px, so each photo is only a few KB */
+function processPhotoFile(file){
+  return new Promise((resolve, reject)=>{
+    if(!file || (file.type && !/^image\//.test(file.type))) return reject(new Error('Please choose a photo (an image file).'));
+    const reader = new FileReader();
+    reader.onerror = ()=>reject(new Error('Could not read that file.'));
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onerror = ()=>reject(new Error('Could not read that image. Try a JPG or PNG photo.'));
+      img.onload = ()=>{
+        const S = 160, c = document.createElement('canvas'); c.width = S; c.height = S;
+        const ctx = c.getContext('2d');
+        const side = Math.min(img.width, img.height), sx = (img.width - side)/2, sy = (img.height - side)/2;
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, S, S);
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, S, S);
+        resolve(c.toDataURL('image/jpeg', 0.72));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+async function saveAccountPhoto(id, photo){
+  if(SYNCED){ await FB.collection('accounts').doc(id).update({photo: photo || ''}); }
+  const a = store.accounts.find(x=>x.id===id);
+  if(a) a.photo = photo || '';
+  if(!SYNCED) saveStore();
+}
+document.getElementById('adminPhotoFile').onchange = async (e)=>{
+  const file = e.target.files[0]; e.target.value = '';
+  if(!file || !adminPhotoTarget) return;
+  const msg = document.getElementById('accErr');
+  try{ await saveAccountPhoto(adminPhotoTarget, await processPhotoFile(file)); msg.style.color = '#1e5b30'; msg.textContent = 'Photo saved.'; }
+  catch(err){ console.error(err); msg.style.color = '#a33'; msg.textContent = err.message || 'Could not save the photo.'; }
+  renderAccounts();
+};
+
+function renderProfile(){
+  const a = profileAcc ? accountById(profileAcc) : null;
+  if(profileAcc && !a) profileAcc = null;
+  document.getElementById('profLoginPanel').classList.toggle('hidden', !!a);
+  document.getElementById('profPanel').classList.toggle('hidden', !a);
+  if(!a) return;
+  document.getElementById('profAvatar').innerHTML = avatarHTML(a, 110);
+  document.getElementById('profName').textContent = a.name;
+  document.getElementById('profIdTxt').textContent = 'ID: ' + a.id;
+  document.getElementById('profWins').textContent = a.wins || 0;
+  document.getElementById('profPlayed').textContent = a.matchesPlayed || 0;
+  document.getElementById('profRewards').innerHTML = (a.rewards||[]).map(r=>'<span class="badge-pill">🏅 ' + escapeHtml(r) + '</span>').join('') || '<span class="meta" style="font-size:12px;color:#8a8a7c;">No rewards yet.</span>';
+  document.getElementById('profRemoveBtn').style.display = a.photo ? 'block' : 'none';
+}
+document.getElementById('goProfile').onclick = ()=>{
+  profileAcc = null; document.getElementById('profErr').textContent = ''; document.getElementById('profMsg').textContent = '';
+  renderProfile(); show('profileScreen');
+};
+document.getElementById('profLoginBtn').onclick = ()=>{
+  const err = document.getElementById('profErr'); err.textContent = '';
+  const id = document.getElementById('profId').value.trim(), pass = document.getElementById('profPass').value.trim();
+  if(!id || !pass){ err.textContent = 'Enter your team ID and password.'; return; }
+  if(fbState==='connecting'){ err.textContent = 'Connecting to the shared database — please wait a moment and try again.'; return; }
+  if(SYNCED && !accountsLoaded){ err.textContent = 'Still loading team IDs — please try again in a moment.'; return; }
+  const acc = findAccount(id, pass);
+  if(!acc){ err.textContent = 'ID or password is incorrect.'; return; }
+  profileAcc = acc.id; document.getElementById('profPass').value = ''; document.getElementById('profMsg').textContent = '';
+  renderProfile();
+};
+document.getElementById('profPhotoBtn').onclick = ()=>document.getElementById('profPhotoFile').click();
+document.getElementById('profPhotoFile').onchange = async (e)=>{
+  const file = e.target.files[0]; e.target.value = '';
+  if(!file || !profileAcc) return;
+  const msg = document.getElementById('profMsg'); msg.style.color = '#5b5b52'; msg.textContent = 'Saving your photo…';
+  try{ await saveAccountPhoto(profileAcc, await processPhotoFile(file)); msg.style.color = '#1e5b30'; msg.textContent = 'Photo saved.'; }
+  catch(err){ console.error(err); msg.style.color = '#a33'; msg.textContent = err.message || 'Could not save the photo.'; }
+  renderProfile();
+};
+document.getElementById('profRemoveBtn').onclick = async ()=>{
+  if(!profileAcc) return;
+  const msg = document.getElementById('profMsg');
+  try{ await saveAccountPhoto(profileAcc, ''); msg.style.color = '#1e5b30'; msg.textContent = 'Photo removed.'; }
+  catch(err){ console.error(err); msg.style.color = '#a33'; msg.textContent = 'Could not remove the photo.'; }
+  renderProfile();
+};
+document.getElementById('profLogoutBtn').onclick = ()=>{ profileAcc = null; document.getElementById('profMsg').textContent = ''; renderProfile(); };
+document.getElementById('profBack').onclick = ()=>{ profileAcc = null; show('homeScreen'); };
 
 
 startFirebase();
