@@ -491,12 +491,31 @@ body:not([data-theme="light"]) .qtext,
     <div class="err" id="adminLoginErr"></div>
     <button class="primary-btn" id="adminLoginBtn">Login to Admin Portal</button>
     <p class="hint" id="adminDefaultHint"></p>
+    <button class="linkbtn" style="margin-top:10px;display:block;text-align:center;width:100%;" id="forgotLink">Forgot password?</button>
     <button class="linkbtn" style="margin-top:6px;display:block;text-align:center;width:100%;" id="backFromAdminLogin">← Back</button>
+  </section>
+
+  <!-- ADMIN PASSWORD RECOVERY -->
+  <section id="adminRecoverScreen" class="card hidden">
+    <h2>Reset Admin Login</h2>
+    <p class="sub">Enter your recovery code and choose a new admin password.</p>
+    <label for="arCode">Recovery code</label>
+    <input id="arCode" type="password" placeholder="Your secret recovery code" autocomplete="off">
+    <label for="arUser">New admin username (leave blank to keep the current one)</label>
+    <input id="arUser" autocomplete="off">
+    <label for="arPass">New admin password (at least 6 characters)</label>
+    <input id="arPass" type="password" placeholder="New password">
+    <label for="arPass2">Repeat new password</label>
+    <input id="arPass2" type="password" placeholder="Repeat new password">
+    <div class="err" id="arErr"></div>
+    <button class="primary-btn" id="arBtn">Reset admin login</button>
+    <button class="linkbtn" style="margin-top:12px;display:block;text-align:center;width:100%;" id="arBack">← Back to login</button>
   </section>
 
   <!-- ADMIN DASHBOARD -->
   <section id="adminScreen" class="admin-wrap hidden">
     <div class="hint" id="syncStatus" style="text-align:left;margin-top:0;margin-bottom:10px;"></div>
+    <div class="live-note" id="recoveryWarn" style="display:none;text-align:left;">⚠️ No recovery code is set yet. Open Settings → Recovery Code so you can reset your login if you ever forget it.</div>
     <div class="tabs">
       <button class="tab active" data-tab="accounts">👥 Student IDs</button>
       <button class="tab" data-tab="questions">❓ Questions</button>
@@ -653,6 +672,16 @@ body:not([data-theme="light"]) .qtext,
       <input id="setAdminPass" type="password" placeholder="Leave blank to keep current">
       <div class="ok" id="settingsMsg"></div>
       <button class="primary-btn ghost" id="saveSettingsBtn">Save Admin Credentials</button>
+      <h3 style="margin-top:20px;">Recovery Code</h3>
+      <p class="hint" style="margin-top:0;text-align:left;">Set a secret recovery code. If you ever forget the admin login, <b>Forgot password?</b> on the Admin Login screen uses this code to reset it. Write the code down somewhere safe; it cannot be shown again. Saving a new code replaces the old one.</p>
+      <label>Current admin password (to confirm)</label>
+      <input id="rcCurPass" type="password" placeholder="Admin password">
+      <label>New recovery code (at least 6 characters)</label>
+      <input id="rcNew" type="password" placeholder="Recovery code" autocomplete="off">
+      <label>Repeat recovery code</label>
+      <input id="rcNew2" type="password" placeholder="Repeat recovery code" autocomplete="off">
+      <div class="err" id="rcMsg"></div>
+      <button class="primary-btn ghost" id="rcSaveBtn">Save Recovery Code</button>
       <h3 style="margin-top:20px;">Reset</h3>
       <p class="hint" style="margin-top:0;">This clears all IDs, custom questions, matches and rewards on this device.</p>
       <button class="primary-btn" style="background:#8a2e22;" id="resetAllBtn">Reset All Data</button>
@@ -2225,6 +2254,7 @@ function initFirestoreSync(){
       const d = doc.data();
       store.adminUser = d.adminUser || store.adminUser;
       store.adminPass = d.adminPass || store.adminPass;
+      store.recoveryHash = d.recoveryHash || '';
     } else {
       FB.collection('settings').doc('admin').set({adminUser:'admin', adminPass:'academy2024'});
     }
@@ -2233,7 +2263,7 @@ function initFirestoreSync(){
 }
 
 /* ---------------- navigation ---------------- */
-const screens = ['homeScreen','loginScreen','compScreen','profileScreen','adminLoginScreen','adminScreen','gameScreen'];
+const screens = ['homeScreen','loginScreen','compScreen','profileScreen','adminLoginScreen','adminRecoverScreen','adminScreen','gameScreen'];
 function show(id){
   screens.forEach(s=>document.getElementById(s).classList.toggle('hidden', s!==id));
   document.getElementById('homeBtn').classList.toggle('hidden', id==='homeScreen');
@@ -2280,6 +2310,7 @@ function openAdminTab(tabName){
 document.querySelectorAll('.tab').forEach(t=>{ t.onclick = ()=>openAdminTab(t.dataset.tab); });
 
 function renderAdmin(){
+  updateRecoveryWarn();
   document.getElementById('syncStatus').textContent = fbState==='ready'
     ? '🔥 Connected — all devices using this app share this data live.'
     : FIREBASE_ENABLED
@@ -4222,6 +4253,98 @@ document.getElementById('profRemoveBtn').onclick = async ()=>{
 document.getElementById('profLogoutBtn').onclick = ()=>{ profileAcc = null; document.getElementById('profMsg').textContent = ''; renderProfile(); };
 document.getElementById('profBack').onclick = ()=>{ profileAcc = null; show('homeScreen'); };
 
+
+/* ---------------- admin password recovery (recovery code) ---------------- */
+const RECOVERY_SALT = 'irfan-admin-recovery:';
+const RC_LOCK_KEY = 'irfan_recovery_lock_v1';
+function cyrb53(str, seed){
+  let h1 = 0xdeadbeef ^ (seed||0), h2 = 0x41c6ce57 ^ (seed||0);
+  for(let i=0, ch; i<str.length; i++){ ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1>>>16), 2246822507) ^ Math.imul(h2 ^ (h2>>>13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2>>>16), 2246822507) ^ Math.imul(h1 ^ (h1>>>13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1>>>0);
+}
+function canSha(){ return !!(window.crypto && window.crypto.subtle && typeof TextEncoder!=='undefined'); }
+function bestHashMethod(){ return canSha() ? 'sha256' : 'c53'; }
+async function hashWith(method, code){
+  const s = RECOVERY_SALT + String(code).trim();
+  if(method==='sha256'){
+    if(!canSha()) return null;
+    const buf = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+    return 'sha256:' + Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  return 'c53:' + cyrb53(s).toString(16);
+}
+function rcLockState(){ try{ return JSON.parse(localStorage.getItem(RC_LOCK_KEY) || '{}'); }catch(e){ return {}; } }
+function rcLockLeftMs(){ const s = rcLockState(); return (s.until && s.until>Date.now()) ? (s.until - Date.now()) : 0; }
+function rcRegisterFail(){
+  const s = rcLockState(); const fails = (s.fails||0) + 1; const o = { fails };
+  if(fails>=5){ o.until = Date.now() + 5*60*1000; o.fails = 0; }
+  try{ localStorage.setItem(RC_LOCK_KEY, JSON.stringify(o)); }catch(e){}
+  return o;
+}
+function rcClearFails(){ try{ localStorage.removeItem(RC_LOCK_KEY); }catch(e){} }
+function updateRecoveryWarn(){
+  const el = document.getElementById('recoveryWarn'); if(!el) return;
+  el.style.display = store.recoveryHash ? 'none' : 'block';
+}
+document.getElementById('forgotLink').onclick = ()=>{
+  ['arCode','arUser','arPass','arPass2'].forEach(id=>{ document.getElementById(id).value = ''; });
+  document.getElementById('arErr').textContent = '';
+  show('adminRecoverScreen');
+};
+document.getElementById('arBack').onclick = ()=>show('adminLoginScreen');
+document.getElementById('arBtn').onclick = async ()=>{
+  const err = document.getElementById('arErr'); err.style.color = '#a33'; err.textContent = '';
+  if(fbState==='connecting'){ err.textContent = 'Connecting to the shared database — please wait a moment and try again.'; return; }
+  if(SYNCED && !settingsLoaded){ err.textContent = 'Sync problem — ' + (fbErrorMsg || 'still connecting…'); return; }
+  const left = rcLockLeftMs();
+  if(left>0){ err.textContent = 'Too many wrong attempts. Try again in ' + Math.ceil(left/60000) + ' minute(s).'; return; }
+  if(!store.recoveryHash){ err.textContent = 'No recovery code has been set up yet. Ask whoever manages the Firebase project to reset the login in the Firebase Console.'; return; }
+  const code = document.getElementById('arCode').value;
+  const newUser = document.getElementById('arUser').value.trim();
+  const p1 = document.getElementById('arPass').value, p2 = document.getElementById('arPass2').value;
+  if(!code.trim()){ err.textContent = 'Enter your recovery code.'; return; }
+  if(p1.length<6){ err.textContent = 'The new password must be at least 6 characters.'; return; }
+  if(p1!==p2){ err.textContent = 'The two passwords do not match.'; return; }
+  const method = String(store.recoveryHash).split(':')[0];
+  const h = await hashWith(method, code);
+  if(h===null){ err.textContent = 'This device cannot check the recovery code here. Open the game from its web link (https) and try again.'; return; }
+  if(h!==store.recoveryHash){
+    const st = rcRegisterFail();
+    err.textContent = st.until ? 'Too many wrong attempts. Locked for 5 minutes.' : 'The recovery code is incorrect.';
+    return;
+  }
+  rcClearFails();
+  const finalUser = newUser || store.adminUser;
+  try{
+    if(SYNCED){ await FB.collection('settings').doc('admin').set({adminUser:finalUser, adminPass:p1}, {merge:true}); }
+    else { store.adminUser = finalUser; store.adminPass = p1; saveStore(); }
+  }catch(e){ console.error(e); err.textContent = 'Could not save — check your connection.'; return; }
+  store.adminUser = finalUser; store.adminPass = p1;
+  ['arCode','arUser','arPass','arPass2'].forEach(id=>{ document.getElementById(id).value = ''; });
+  const le = document.getElementById('adminLoginErr'); le.style.color = '#1e5b30';
+  le.textContent = 'Admin login updated. Log in with your new details.';
+  show('adminLoginScreen');
+};
+document.getElementById('rcSaveBtn').onclick = async ()=>{
+  const msg = document.getElementById('rcMsg'); msg.style.color = '#a33'; msg.textContent = '';
+  const cur = document.getElementById('rcCurPass').value;
+  const c1 = document.getElementById('rcNew').value, c2 = document.getElementById('rcNew2').value;
+  if(cur!==store.adminPass){ msg.textContent = 'Your current admin password is not correct.'; return; }
+  if(c1.trim().length<6){ msg.textContent = 'The recovery code must be at least 6 characters.'; return; }
+  if(c1.trim()!==c2.trim()){ msg.textContent = 'The two codes do not match.'; return; }
+  const hash = await hashWith(bestHashMethod(), c1);
+  try{
+    if(SYNCED){ await FB.collection('settings').doc('admin').set({recoveryHash:hash}, {merge:true}); }
+    else { store.recoveryHash = hash; saveStore(); }
+  }catch(e){ console.error(e); msg.textContent = 'Could not save — check your connection.'; return; }
+  store.recoveryHash = hash;
+  ['rcCurPass','rcNew','rcNew2'].forEach(id=>{ document.getElementById(id).value = ''; });
+  msg.style.color = '#1e5b30';
+  msg.textContent = 'Recovery code saved. Write it down somewhere safe; it cannot be shown again.';
+  updateRecoveryWarn();
+};
 
 startFirebase();
 </script>
