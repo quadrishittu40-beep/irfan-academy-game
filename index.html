@@ -382,6 +382,9 @@ body:not([data-theme="light"]) .qtext,
         <div class="stat"><b id="profPlayed">0</b><span>Matches played</span></div>
       </div>
       <div id="profRewards" style="margin-top:10px;text-align:center;"></div>
+      <h3 style="margin:18px 0 8px;font-size:16px;">🏆 Competitions</h3>
+      <div id="profComps"></div>
+      <div class="err" id="profCompMsg" style="text-align:center;"></div>
       <div class="err" id="profMsg" style="text-align:center;"></div>
       <input type="file" id="profPhotoFile" accept="image/*" class="hidden">
       <button class="primary-btn gold" id="profPhotoBtn">📷 Choose / change photo</button>
@@ -635,12 +638,17 @@ body:not([data-theme="light"]) .qtext,
           <button type="button" class="level-btn adv" data-level="advanced">🟠 Advanced</button>
         </div>
       </div>
-      <label>Select the teams (2 to 16)</label>
+      <label class="pick-row" style="margin-top:12px;"><input type="checkbox" id="compRegMode"><span>Open registration: let players register through My Profile</span></label>
+      <div id="compMaxWrap" class="hidden">
+        <label>Maximum teams (2 to 16)</label>
+        <input id="compMax" type="number" min="2" max="16" value="16">
+      </div>
+      <label id="compPickLabel">Select the teams (2 to 16)</label>
       <div id="compTeamPick"></div>
       <div class="hint" id="compPickCount" style="text-align:left;margin-top:6px;"></div>
       <div class="err" id="compErr"></div>
       <button class="primary-btn gold" id="createCompBtn">Create Knockout Bracket</button>
-      <p class="hint" style="text-align:left;">Stages run automatically: Knockout Stage → Quarter-final → Semi-final → Final. Early stages are skipped when fewer teams enter, and odd numbers get byes. Each match is started from the bracket with the ▶ button.</p>
+      <p class="hint" style="text-align:left;">Stages run automatically: Knockout Stage → Quarter-final → Semi-final → Final. Early stages are skipped when fewer teams enter, and odd numbers get byes. Each match is started from the bracket with the ▶ button. With registration open, players sign up from My Profile and you build the bracket when you are ready.</p>
     </div>
 
     <div class="panel hidden" id="panel-scores">
@@ -2640,6 +2648,7 @@ function toDatetimeLocalValue(ts){
 function renderBracket(container, comp, admin){
   container.innerHTML = '';
   if(!comp){ container.innerHTML = '<div class="empty">No competition has been created yet.</div>'; return; }
+  if(comp.status==='registration'){ renderRegistration(container, comp, admin); return; }
   const SUBJ_LABEL2 = {general:'General Mix', fiqh:'Fiqh', aqidah:"'Aqīdah", sirah:'Sīrah', tajwid:'Tajwīd', mirath:'Mīrath', adab:'Adab'};
   if(admin){
     const head = document.createElement('div'); head.style.marginBottom = '10px';
@@ -2709,6 +2718,7 @@ function renderAdminComp(){
 function refreshCompViews(){
   if(!document.getElementById('compScreen').classList.contains('hidden')) renderPublicComp();
   if(!document.getElementById('adminScreen').classList.contains('hidden')) renderAdminComp();
+  if(!document.getElementById('profileScreen').classList.contains('hidden')) renderProfile();
 }
 function updatePickCount(){
   document.getElementById('compPickCount').textContent = compPick.size + ' selected' + (compPick.size>MAX_COMP_TEAMS ? ' — maximum is ' + MAX_COMP_TEAMS : '');
@@ -2725,12 +2735,31 @@ function renderCompTeamPick(){
   });
   updatePickCount();
 }
+function updateCompRegUI(){
+  const on = document.getElementById('compRegMode').checked;
+  document.getElementById('compMaxWrap').classList.toggle('hidden', !on);
+  document.getElementById('compPickLabel').textContent = on ? 'Pre-register teams (optional, up to the maximum)' : 'Select the teams (2 to 16)';
+  document.getElementById('createCompBtn').textContent = on ? 'Open Registration' : 'Create Knockout Bracket';
+}
+document.getElementById('compRegMode').onchange = updateCompRegUI;
+function buildRegistrationComp(name, teams, level, subject, scheduledAt, maxTeams){
+  return { name, level: level||'beginner', subject: subject||'general', scheduledAt: scheduledAt||null, createdAt: Date.now(),
+    status:'registration', size:0, teams:[], rounds:[], third:null, championId:null, runnerUpId:null, thirdId:null, fourthId:null,
+    registered: teams.map(t=>({id:t.id, name:t.name, at:Date.now()})), maxTeams: maxTeams||MAX_COMP_TEAMS };
+}
 document.getElementById('createCompBtn').onclick = async ()=>{
-  const err = document.getElementById('compErr');
-  const name = document.getElementById('compName').value.trim() || 'Knockout Competition';
+  const err = document.getElementById('compErr'); err.textContent = '';
+  const regMode = document.getElementById('compRegMode').checked;
+  const name = document.getElementById('compName').value.trim() || (regMode ? 'Open Competition' : 'Knockout Competition');
   const ids = [...compPick].filter(id=>store.accounts.some(a=>a.id===id));
-  if(ids.length < 2){ err.textContent = 'Select at least 2 teams.'; return; }
-  if(ids.length > MAX_COMP_TEAMS){ err.textContent = 'A competition can have at most ' + MAX_COMP_TEAMS + ' teams.'; return; }
+  let maxTeams = MAX_COMP_TEAMS;
+  if(regMode){
+    maxTeams = Math.min(MAX_COMP_TEAMS, Math.max(2, parseInt(document.getElementById('compMax').value,10) || MAX_COMP_TEAMS));
+    if(ids.length > maxTeams){ err.textContent = 'You ticked more teams than the maximum of ' + maxTeams + '.'; return; }
+  } else {
+    if(ids.length < 2){ err.textContent = 'Select at least 2 teams.'; return; }
+    if(ids.length > MAX_COMP_TEAMS){ err.textContent = 'A competition can have at most ' + MAX_COMP_TEAMS + ' teams.'; return; }
+  }
   const active = currentComp();
   if(active && active.status!=='complete'){
     const ok = await showConfirm('A competition is still in progress. Starting a new one replaces it on the bracket screen (its match results stay in Match History). Continue?');
@@ -2739,12 +2768,164 @@ document.getElementById('createCompBtn').onclick = async ()=>{
   const teams = ids.map(id=>{ const a = store.accounts.find(x=>x.id===id); return {id:a.id, name:a.name}; });
   const schedVal = document.getElementById('compSchedule').value;
   const scheduledAt = schedVal ? new Date(schedVal).getTime() : null;
-  try{ await saveComp(buildBracket(name, teams, compLevel.get(), compSubject.get(), scheduledAt)); }
+  const comp = regMode ? buildRegistrationComp(name, teams, compLevel.get(), compSubject.get(), scheduledAt, maxTeams)
+                       : buildBracket(name, teams, compLevel.get(), compSubject.get(), scheduledAt);
+  try{ await saveComp(comp); }
   catch(e){ console.error(e); err.textContent = 'Could not save — check your connection.'; return; }
   err.textContent = '';
   compPick.clear(); document.getElementById('compName').value = ''; document.getElementById('compSchedule').value = '';
+  document.getElementById('compRegMode').checked = false; updateCompRegUI();
   renderCompTeamPick();
 };
+
+/* ---------------- competition registration (players sign up from My Profile) ---------------- */
+async function updateRegistration(compId, mutate){
+  if(SYNCED){
+    const ref = FB.collection('competitions').doc(compId);
+    await FB.runTransaction(async tx=>{
+      const snap = await tx.get(ref);
+      if(!snap.exists) throw new Error('This competition no longer exists.');
+      const d = snap.data(); mutate(d); tx.set(ref, d);
+    });
+  } else {
+    const c = store.competitions.find(x=>x.id===compId);
+    if(!c) throw new Error('This competition no longer exists.');
+    mutate(c); saveStore(); refreshCompViews();
+  }
+}
+async function registerForCompetition(compId, acc){
+  await updateRegistration(compId, d=>{
+    if(d.status!=='registration') throw new Error('Registration for this competition is closed.');
+    d.registered = d.registered || [];
+    if(d.registered.some(r=>r.id===acc.id)) return;
+    if(d.registered.length >= (d.maxTeams || MAX_COMP_TEAMS)) throw new Error('This competition is full.');
+    d.registered.push({id:acc.id, name:acc.name, at:Date.now()});
+  });
+}
+async function withdrawFromCompetition(compId, accId){
+  await updateRegistration(compId, d=>{
+    if(d.status!=='registration') throw new Error('Registration is closed, so your team can no longer withdraw. Please speak to the Admin.');
+    d.registered = (d.registered||[]).filter(r=>r.id!==accId);
+  });
+}
+async function adminRemoveRegistrant(compId, accId){
+  await updateRegistration(compId, d=>{
+    if(d.status!=='registration') throw new Error('Registration is already closed.');
+    d.registered = (d.registered||[]).filter(r=>r.id!==accId);
+  });
+}
+async function closeRegistration(compId){
+  await updateRegistration(compId, d=>{
+    if(d.status!=='registration') throw new Error('Registration is already closed.');
+    const teams = (d.registered||[]).map(r=>({id:r.id, name:r.name}));
+    if(teams.length<2) throw new Error('At least 2 teams must be registered before the bracket can be built.');
+    const built = buildBracket(d.name, teams, d.level, d.subject, d.scheduledAt || null);
+    built.createdAt = d.createdAt; built.registered = d.registered; built.maxTeams = d.maxTeams;
+    Object.keys(built).forEach(k=>{ d[k] = built[k]; });
+  });
+}
+function renderRegistration(container, comp, admin){
+  const reg = comp.registered || [], max = comp.maxTeams || MAX_COMP_TEAMS;
+  const subjTxt = SUBJECT_NAMES[comp.subject||'general'] || 'General Mix';
+  const lvlTxt = (comp.subject && comp.subject!=='general') ? '' : ((comp.level==='advanced' ? '🟠 Advanced' : '🟢 Beginner') + ' · ');
+  const head = document.createElement('div'); head.style.marginBottom = '10px';
+  head.innerHTML = `<b>${escapeHtml(comp.name)}</b><br><span class="meta" style="font-size:11.5px;color:#8a8a7c;">${subjTxt} · ${lvlTxt}Registration open · ${reg.length} of ${max} teams registered</span>` +
+    (comp.scheduledAt ? `<br><span class="meta" style="font-size:11.5px;color:#8a6d00;font-weight:700;">🗓️ Scheduled: ${escapeHtml(formatSchedule(comp.scheduledAt))}</span>` : '');
+  container.appendChild(head);
+  const msg = document.createElement('div'); msg.className = 'err'; msg.style.margin = '6px 0 8px';
+  const run = async (fn, okText)=>{
+    msg.style.color = '#a33'; msg.textContent = '';
+    try{ await fn(); if(okText){ msg.style.color = '#1e5b30'; msg.textContent = okText; } }
+    catch(e){ console.error(e); msg.textContent = e.message || 'Something went wrong.'; }
+  };
+  if(admin){
+    const schedRow = document.createElement('div'); schedRow.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap;';
+    const schedInput = document.createElement('input'); schedInput.type = 'datetime-local'; schedInput.style.flex = '1'; schedInput.style.minWidth = '160px';
+    schedInput.value = toDatetimeLocalValue(comp.scheduledAt);
+    const schedBtn = document.createElement('button'); schedBtn.className = 'small-btn'; schedBtn.textContent = '💾 Save Date/Time';
+    schedBtn.onclick = ()=>run(()=>updateRegistration(comp.id, d=>{ d.scheduledAt = schedInput.value ? new Date(schedInput.value).getTime() : null; }), 'Date and time saved.');
+    schedRow.appendChild(schedInput); schedRow.appendChild(schedBtn); container.appendChild(schedRow);
+  }
+  reg.forEach(r=>{
+    const row = document.createElement('div'); row.className = 'list-item';
+    row.innerHTML = `<div style="display:flex;gap:10px;align-items:center;min-width:0;">${avatarHTML(accountById(r.id) || {name:r.name}, 34)}<b>${escapeHtml(r.name)}</b></div>`;
+    if(admin){
+      const rm = document.createElement('button'); rm.className = 'del-btn'; rm.textContent = 'Remove';
+      rm.onclick = ()=>run(()=>adminRemoveRegistrant(comp.id, r.id));
+      row.appendChild(rm);
+    }
+    container.appendChild(row);
+  });
+  if(!reg.length){ const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'No teams have registered yet.'; container.appendChild(e); }
+  container.appendChild(msg);
+  if(admin){
+    const free = store.accounts.filter(a=>!reg.some(r=>r.id===a.id));
+    if(free.length && reg.length<max){
+      const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap;';
+      const sel = document.createElement('select'); sel.style.flex = '1'; sel.style.minWidth = '160px';
+      free.forEach(a=>{ const o = document.createElement('option'); o.value = a.id; o.textContent = a.name + ' (' + a.id + ')'; sel.appendChild(o); });
+      const add = document.createElement('button'); add.className = 'small-btn'; add.textContent = '➕ Add team';
+      add.onclick = ()=>{ const acc = accountById(sel.value); if(acc) run(()=>registerForCompetition(comp.id, acc)); };
+      row.appendChild(sel); row.appendChild(add); container.appendChild(row);
+    }
+    const closeBtn = document.createElement('button'); closeBtn.className = 'primary-btn gold'; closeBtn.style.marginTop = '0';
+    closeBtn.textContent = '✅ Close registration & build bracket'; closeBtn.disabled = reg.length<2;
+    closeBtn.onclick = async ()=>{
+      const ok = await showConfirm('Close registration with ' + reg.length + ' team(s) and build the knockout bracket? Nobody else will be able to register.');
+      if(ok) await run(()=>closeRegistration(comp.id), 'Registration closed. The bracket is ready.');
+    };
+    container.appendChild(closeBtn);
+    const del = document.createElement('button'); del.className = 'del-btn'; del.style.marginTop = '10px';
+    del.textContent = 'Delete this competition';
+    del.onclick = async ()=>{
+      const ok = await showConfirm('Delete this competition and its registrations?');
+      if(ok) await run(()=>deleteComp(comp.id));
+    };
+    container.appendChild(del);
+  } else {
+    const hint = document.createElement('div'); hint.className = 'hint'; hint.style.textAlign = 'left';
+    hint.textContent = 'To register your team, open My Profile from the home screen, log in with your team ID and password, and tap Register.';
+    container.appendChild(hint);
+    const go = document.createElement('button'); go.className = 'primary-btn gold'; go.textContent = '👤 Go to My Profile';
+    go.onclick = ()=>document.getElementById('goProfile').onclick();
+    container.appendChild(go);
+  }
+}
+function renderProfileComps(a){
+  const box = document.getElementById('profComps'); box.innerHTML = '';
+  const msg = document.getElementById('profCompMsg');
+  const card = html=>{ const d = document.createElement('div'); d.className = 'fx'; d.innerHTML = html; box.appendChild(d); return d; };
+  const comp = currentComp();
+  if(!comp){ box.innerHTML = '<div class="empty">No competition is open right now.</div>'; return; }
+  const subj = SUBJECT_NAMES[comp.subject||'general'] || 'General Mix';
+  const when = comp.scheduledAt ? ' · 🗓️ ' + escapeHtml(formatSchedule(comp.scheduledAt)) : '';
+  if(comp.status==='registration'){
+    const reg = comp.registered || [], max = comp.maxTeams || MAX_COMP_TEAMS;
+    const mine = reg.some(r=>r.id===a.id), full = reg.length>=max;
+    const extra = mine ? '<div class="st" style="color:#1e5b30;font-weight:700;margin-top:6px;">✅ Your team is registered.</div>'
+                : (full ? '<div class="st" style="margin-top:6px;">This competition is full.</div>' : '');
+    const c = card(`<b>${escapeHtml(comp.name)}</b><br><span class="st">${subj}${when}<br>Registration is open · ${reg.length} of ${max} teams registered</span>${extra}`);
+    if(mine || !full){
+      const btn = document.createElement('button'); btn.className = mine ? 'del-btn' : 'small-btn'; btn.style.marginTop = '10px';
+      btn.textContent = mine ? 'Withdraw my team' : '📝 Register my team';
+      btn.onclick = async ()=>{
+        msg.style.color = '#a33'; msg.textContent = '';
+        try{
+          if(mine) await withdrawFromCompetition(comp.id, a.id); else await registerForCompetition(comp.id, a);
+          msg.style.color = '#1e5b30'; msg.textContent = mine ? 'Your team has withdrawn.' : 'Your team is registered.';
+        }catch(e){ console.error(e); msg.textContent = e.message || 'Could not complete that.'; }
+        renderProfileComps(a);
+      };
+      c.appendChild(btn);
+    }
+    return;
+  }
+  if((comp.teams||[]).some(t=>t.id===a.id)){
+    card(`<b>${escapeHtml(comp.name)}</b><br><span class="st">${subj}${when}<br>✅ Your team is in this competition. ${comp.status==='complete' ? 'It has finished.' : 'On match day, join your match from the Competition screen.'}</span>`);
+  } else {
+    card(`<b>${escapeHtml(comp.name)}</b><br><span class="st">${subj}${when}<br>Registration is closed.</span>`);
+  }
+}
 
 /* ---------------- certificate info + admin copies ---------------- */
 function matchCertInfo(m){
@@ -2864,6 +3045,7 @@ async function joinFriendlyRoom(myAcc, oppAcc, level, subject){
   return roomId;
 }
 function nextSlotFor(comp, id){
+  if(comp.status==='registration') return {msg:'Registration is still open. The bracket will be ready once the Admin closes registration.'};
   if(!comp.teams.some(t=>t.id===id)) return {msg:'Your team is not in this competition.'};
   const mine = allSlots(comp).filter(s=>!s.fx.bye && !s.fx.winnerId && (s.fx.a===id || s.fx.b===id));
   if(mine.length===0){
@@ -4218,6 +4400,7 @@ function renderProfile(){
   document.getElementById('profPlayed').textContent = a.matchesPlayed || 0;
   document.getElementById('profRewards').innerHTML = (a.rewards||[]).map(r=>'<span class="badge-pill">🏅 ' + escapeHtml(r) + '</span>').join('') || '<span class="meta" style="font-size:12px;color:#8a8a7c;">No rewards yet.</span>';
   document.getElementById('profRemoveBtn').style.display = a.photo ? 'block' : 'none';
+  renderProfileComps(a);
 }
 document.getElementById('goProfile').onclick = ()=>{
   profileAcc = null; document.getElementById('profErr').textContent = ''; document.getElementById('profMsg').textContent = '';
